@@ -1,11 +1,13 @@
 package com.prabhat.camerax
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.os.Bundle
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -13,8 +15,12 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture.OnImageCapturedCallback
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
+import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.CameraController
 import androidx.camera.view.LifecycleCameraController
+import androidx.camera.view.video.AudioConfig
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -26,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -46,8 +53,13 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.prabhat.camerax.ui.theme.CameraXTheme
 import kotlinx.coroutines.launch
+import java.io.File
 
 class MainActivity : ComponentActivity() {
+
+
+    private var recording: Recording? = null
+
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,7 +71,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             CameraXTheme {
 
-                val corotuneScope= rememberCoroutineScope()
+                val corotuneScope = rememberCoroutineScope()
                 val scaffoldState = rememberBottomSheetScaffoldState()
                 val controller = remember {
                     LifecycleCameraController(applicationContext).apply {
@@ -69,11 +81,14 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
-                val viewModel=viewModel<MainViewModel>()
+                val viewModel = viewModel<MainViewModel>()
                 val bitmaps by viewModel.bitmaps.collectAsState()
                 BottomSheetScaffold(
                     sheetContent = {
-                        PhotoBottomSheetContent(bitmaps =bitmaps, modifier = Modifier.fillMaxWidth() )
+                        PhotoBottomSheetContent(
+                            bitmaps = bitmaps,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     },
                     sheetPeekHeight = 0.dp,
                     scaffoldState = scaffoldState
@@ -119,7 +134,10 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             IconButton(onClick = {
-                                takePhoto(controller = controller, onPhotoTaken = viewModel::onTakePhoto)
+                                takePhoto(
+                                    controller = controller,
+                                    onPhotoTaken = viewModel::onTakePhoto
+                                )
 
                             }) {
                                 Icon(
@@ -128,7 +146,16 @@ class MainActivity : ComponentActivity() {
                                 )
 
                             }
-                            IconButton(onClick = {}) { }
+                            IconButton(onClick = {
+                              recordVideo(controller = controller)
+
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.Videocam,
+                                    contentDescription = "Record Video"
+                                )
+
+                            }
 
                         }
 
@@ -140,26 +167,66 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun takePhoto(controller: LifecycleCameraController, onPhotoTaken: (Bitmap) -> Unit) {
+        if (!hasRequiredPermission()) {
+            return
+        }
         controller.takePicture(
             ContextCompat.getMainExecutor(applicationContext),
-            object :OnImageCapturedCallback(){
+            object : OnImageCapturedCallback() {
                 override fun onCaptureSuccess(image: ImageProxy) {
                     super.onCaptureSuccess(image)
-                    val matrix=Matrix().apply {
+                    val matrix = Matrix().apply {
                         postRotate(image.imageInfo.rotationDegrees.toFloat())
                     }
-                    val rotateBitmap=Bitmap.createBitmap(image.toBitmap(),
-                        0,0,image.width,image.height,matrix,true)
+                    val rotateBitmap = Bitmap.createBitmap(
+                        image.toBitmap(),
+                        0, 0, image.width, image.height, matrix, true
+                    )
                     onPhotoTaken(rotateBitmap)
                 }
 
                 override fun onError(exception: ImageCaptureException) {
                     super.onError(exception)
-                    Log.e("Camera","Couldn't take Photo",exception)
+                    Log.e("Camera", "Couldn't take Photo", exception)
                 }
             }
 
         )
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun recordVideo(controller: LifecycleCameraController) {
+        if (recording != null) {
+            recording?.stop()
+            recording=null
+            return
+
+        }
+        if (!hasRequiredPermission()) {
+            return
+        }
+        val outputfile=File(filesDir,"my-recording-mp4")
+        recording = controller.startRecording(
+            FileOutputOptions.Builder(outputfile).build(),
+            AudioConfig.create(true),
+            ContextCompat.getMainExecutor(applicationContext)
+
+        ){event->
+            when(event){
+                is VideoRecordEvent.Finalize->{
+
+                    if (event.hasError()){
+                        recording?.close()
+                        recording=null
+                        Toast.makeText(applicationContext, "Video captured failed", Toast.LENGTH_SHORT).show()
+                    }else{
+                        Toast.makeText(applicationContext, "Video captured Succed", Toast.LENGTH_SHORT).show()
+
+                    }
+                }
+            }
+
+        }
     }
 
     private fun hasRequiredPermission(): Boolean {
